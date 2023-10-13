@@ -5,56 +5,23 @@ pragma solidity >=0.7.0 <0.9.0;
 
 // Interface for the ERC20 token, in our case cEUR
 interface IERC20Token {
-    // Transfers tokens from one address to another
-    function transfer(address, uint256) external returns (bool);
-
-    // Approves a transfer of tokens from one address to another
-    function approve(address, uint256) external returns (bool);
-
-    // Transfers tokens from one address to another, with the permission of the first address
-    function transferFrom(address, address, uint256) external returns (bool);
-
-    // Returns the total supply of tokens
-    function totalSupply() external view returns (uint256);
-
-    // Returns the balance of tokens for a given address
-    function balanceOf(address) external view returns (uint256);
-
-    // Returns the amount of tokens that an address is allowed to transfer from another address
-    function allowance(address, address) external view returns (uint256);
-
-    // Event for token transfers
-    event Transfer(address indexed from, address indexed to, uint256 value);
-    // Event for approvals of token transfers
-    event Approval(
-        address indexed owner,
-        address indexed spender,
-        uint256 value
-    );
+    function transferFrom(address sender, address recipient, uint256 amount) external returns (bool);
+    // Add other required ERC20 methods here
 }
 
 // Contract for the marketplace
 contract Marketplace {
-    // Keeps track of the number of products in the marketplace
-    uint256 internal productsLength = 0;
-    // Address of the cREALToken
-    address internal cREALTokenAddress = 0xE4D517785D091D3c54818832dB6094bcc2744545;
+    uint256 public productsLength; // Publicly accessible number of products
+    address public cREALTokenAddress; // Publicly accessible address of the cREALToken
 
     // Structure for a product
     struct Product {
-        // Address of the product owner
         address payable owner;
-        // Name of the product
         string name;
-        // Link to an image of the product
         string image;
-        // Description of the product
         string description;
-        // Location of the product
         string location;
-        // Price of the product in tokens
         uint256 price;
-        // Number of times the product has been sold
         uint256 sold;
     }
 
@@ -73,18 +40,18 @@ contract Marketplace {
         uint256 createdAt;
     }
 
-    // Mapping of products to their index
-    mapping(uint256 => Product) internal products;
+    Product[] public products;
+    mapping(address => Transaction[]) public transactionHistory;
 
-    // Mapping containing user transaction history owner balance in contract
-    mapping(address => Transaction[]) internal transactionHistory;
-
-    modifier isOwner(uint _index, address caller) {
-        require(products[_index].owner == caller, "not owner");
+    modifier isOwner(uint _index) {
+        require(products[_index].owner == msg.sender, "Not the owner");
         _;
     }
 
-    // Writes a new product to the marketplace
+    constructor(address _tokenAddress) {
+        cREALTokenAddress = _tokenAddress;
+    }
+
     function writeProduct(
         string memory _name,
         string memory _image,
@@ -92,133 +59,81 @@ contract Marketplace {
         string memory _location,
         uint256 _price
     ) public {
-        // Checks that price of product is greater than 0
-        require(_price > 0, "Price must be greater 0");
-        // Number of times the product has been sold is initially 0 because it has not been sold yet
-        uint256 _sold = 0;
-        // Set product index
+        require(_price > 0, "Price must be greater than 0");
+
+        products.push(Product(payable(msg.sender), _name, _image, _description, _location, _price, 0));
+
         uint256 _index = productsLength;
-        // Adds a new Product struct to the products mapping
-        products[_index] = Product(
-            // Sender's address is set as the owner
-            payable(msg.sender),
-            _name,
-            _image,
-            _description,
-            _location,
-            _price,
-            _sold
-        );
-        // add transaction to user history
-        Transaction[] storage _history = transactionHistory[msg.sender];
-        uint256 id = _history.length;
-        _history.push(
-            Transaction({
-                txID: id,
-                tranType: TranType.ADD,
-                productId: _index,
-                seller: products[_index].owner,
-                price: products[_index].price,
-                createdAt: block.timestamp
-            })
-        );
-        // Increases the number of products in the marketplace by 1
         productsLength++;
+
+        transactionHistory[msg.sender].push(Transaction({
+            txID: _index,
+            tranType: TranType.ADD,
+            productId: _index,
+            seller: msg.sender,
+            price: _price,
+            createdAt: block.timestamp
+        }));
     }
 
-    // Reads a product from the marketplace
-    function readProduct(
-        // Index of the product
-        uint256 _index
-    )
-        public
-        view
-        returns (
-            address payable,
-            string memory,
-            string memory,
-            string memory,
-            string memory,
-            uint256,
-            uint256
-        )
-    {
-        // Returns the details of the product
+    function readProduct(uint256 _index) public view returns (address, string memory, string memory, string memory, string memory, uint256, uint256) {
+        require(_index < productsLength, "Product does not exist");
+        Product storage product = products[_index];
         return (
-            products[_index].owner,
-            products[_index].name,
-            products[_index].image,
-            products[_index].description,
-            products[_index].location,
-            products[_index].price,
-            products[_index].sold
+            product.owner,
+            product.name,
+            product.image,
+            product.description,
+            product.location,
+            product.price,
+            product.sold
         );
     }
 
-    // Buys a product from the marketplace
-    function buyProduct(
-        // Index of the product
-        uint256 _index
-    ) public payable {
-        // Transfers the tokens from the buyer to the seller
-        require(
-            IERC20Token(cREALTokenAddress).transferFrom(
-                // Sender's address is the buyer
-                msg.sender,
-                // Receiver's address is the seller
-                products[_index].owner,
-                // Amount of tokens to transfer is the price of the product
-                products[_index].price
-            ),
-            // If transfer fails, throw an error message
-            "Transfer failed."
-        );
-        // Increases the number of times the product has been sold
-        products[_index].sold++;
+    function buyProduct(uint256 _index) public {
+        require(_index < productsLength, "Product does not exist");
 
-        // add transaction to user history
-        Transaction[] storage _history = transactionHistory[msg.sender];
-        uint256 id = _history.length;
-        _history.push(
-            Transaction({
-                txID: id,
-                tranType: TranType.BUY,
-                productId: _index,
-                seller: products[_index].owner,
-                price: products[_index].price,
-                createdAt: block.timestamp
-            })
-        );
+        Product storage product = products[_index];
+
+        require(product.owner != address(0), "Product has been removed");
+
+        require(IERC20Token(cREALTokenAddress).transferFrom(msg.sender, product.owner, product.price), "Transfer failed");
+
+        product.sold++;
+
+        transactionHistory[msg.sender].push(Transaction({
+            txID: transactionHistory[msg.sender].length,
+            tranType: TranType.BUY,
+            productId: _index,
+            seller: product.owner,
+            price: product.price,
+            createdAt: block.timestamp
+        }));
     }
 
-    // Remove a product from the marketplace
-    function removeProduct(
-        uint _index
-    ) public isOwner(_index, msg.sender) {
-        // delete item from contract
-        delete (products[_index]);
-        // add transaction to user history
-        Transaction[] storage _history = transactionHistory[msg.sender];
-        uint256 id = _history.length;
-        _history.push(
-            Transaction({
-                txID: id,
-                tranType: TranType.REMOVE,
-                productId: _index,
-                seller: products[_index].owner,
-                price: products[_index].price,
-                createdAt: block.timestamp
-            })
-        );
+    function removeProduct(uint256 _index) public isOwner(_index) {
+        require(_index < productsLength, "Product does not exist");
+
+        Product storage product = products[_index];
+
+        for (uint i = _index; i < productsLength - 1; i++) {
+            products[i] = products[i + 1];
+        }
+        products.pop(); // Remove the last element
+
+        transactionHistory[msg.sender].push(Transaction({
+            txID: transactionHistory[msg.sender].length,
+            tranType: TranType.REMOVE,
+            productId: _index,
+            seller: product.owner,
+            price: product.price,
+            createdAt: block.timestamp
+        }));
+
+        productsLength--;
     }
 
-    // Returns the transaction history of a user
-    function getTransactionHistory(address _user) public view returns (Transaction[] memory){
+    function getTransactionHistory(address _user) public view returns (Transaction[] memory) {
         return transactionHistory[_user];
-    }
-
-    // Returns the number of products in the marketplace
-    function getProductsLength() public view returns (uint256) {
-        return (productsLength);
     }
 }
